@@ -140,7 +140,8 @@ class MusicBroadcastMod(loader.Module):
             return
         self._last_state = current_state
         final_cover = cover_url if cover_url else self._default_cover
-        await self._update_channel(text=f"🟥 {track_name} - {artist_name}", cover_url=final_cover)
+        # Убрал красный квадрат отсюда
+        await self._update_channel(text=f"{track_name} - {artist_name}", cover_url=final_cover)
 
     async def _update_channel(self, text, cover_url=None):
         channel_id = int(self.config["channel_id"])
@@ -152,8 +153,6 @@ class MusicBroadcastMod(loader.Module):
         try:
             from hikkatl.tl import functions
 
-            # 1. Меняем название ОДИН раз при запуске/смене (или проверяем текущее, чтобы не спамить запросами)
-            # Для надежности ставим fixed_title, но ТГ не будет ругаться, если оно уже такое
             try:
                 await self._client(functions.channels.EditTitleRequest(
                     channel=channel_id,
@@ -162,14 +161,12 @@ class MusicBroadcastMod(loader.Module):
             except Exception:
                 pass
 
-            # 2. Удаляем предыдущий пост
             if message_id:
                 try:
                     await self._client.delete_messages(channel_id, message_id)
                 except Exception:
                     pass
 
-            # 3. Отправляем новый чистый пост
             if cover_url:
                 new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
                 self.config["message_id"] = new_msg.id
@@ -177,7 +174,6 @@ class MusicBroadcastMod(loader.Module):
                 new_msg = await self._client.send_message(channel_id, text)
                 self.config["message_id"] = new_msg.id
 
-            # 4. Вычищаем сервисные сообщения ТГ о переименовании, чтобы не засорять ленту
             await asyncio.sleep(0.5)
             messages = await self._client.get_messages(channel_id, limit=3)
             for msg in messages:
@@ -192,7 +188,7 @@ class MusicBroadcastMod(loader.Module):
 
     @loader.command()
     async def settrackfmcmd(self, message):
-        """<text> — ручной ввод трека формата Имя - Артист"""
+        """<text> - ручной ввод трека формата Имя - Артист"""
         args = utils.get_args_raw(message)
         args_clean = args.strip() if args else ""
 
@@ -203,7 +199,7 @@ class MusicBroadcastMod(loader.Module):
             await message.delete()
             return
 
-        separator = "—" if "—" in args_clean else ("-" if "-" in args_clean else None)
+        separator = "-" if "-" in args_clean else None
 
         if separator:
             try:
