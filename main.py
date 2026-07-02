@@ -34,26 +34,24 @@ class MusicBroadcastMod(loader.Module):
         self._session = aiohttp.ClientSession()
         
         if self.config["auto_poll"]:
-            self._task = self.run_background_task(self._poll_loop())
+            # Стандартный create_task, но с жесткой ссылкой self._task, чтобы не умирал
+            self._task = asyncio.create_task(self._poll_loop())
 
     async def on_unload(self):
         if self._task:
-            try:
-                self._task.cancel()
-            except Exception:
-                pass
+            self._task.cancel()
         if self._session:
             await self._session.close()
 
     async def _poll_loop(self):
-        await asyncio.sleep(3)
+        await asyncio.sleep(5)
         while True:
             try:
                 await self._check_lastfm()
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"[Music] Loop error: {e}")
+                logger.error(f"[Music] General loop error: {e}")
             
             await asyncio.sleep(max(10, int(self.config["poll_interval"])))
 
@@ -146,16 +144,15 @@ class MusicBroadcastMod(loader.Module):
         if not channel_id:
             return
 
-        # Полная изоляция от любых ошибок Telegram внутри метода
         try:
-            from hikkatl.tl import functions
-
+            # 1. Удаление старого сообщения с защитой от MessageIdInvalid
             if message_id:
                 try:
                     await self._client.delete_messages(channel_id, message_id)
                 except Exception:
                     pass
 
+            # 2. Отправка нового
             if cover_url:
                 try:
                     new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
@@ -167,6 +164,7 @@ class MusicBroadcastMod(loader.Module):
                 new_msg = await self._client.send_message(channel_id, text)
                 self.config["message_id"] = new_msg.id
 
+            # 3. Чистка сервисных сообщений ТГ
             await asyncio.sleep(0.5)
             try:
                 messages = await self._client.get_messages(channel_id, limit=3)
