@@ -1,6 +1,7 @@
 import asyncio
 import aiohttp
-from telethon.tl.functions.channels import EditTitleRequest
+from telethon.tl.functions.channels import EditTitleRequest, EditDescriptionRequest
+from telethon.tl.types import MessageService, MessageActionChatEditTitle
 import logging
 
 from .. import loader, utils
@@ -9,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 @loader.tds
 class LastFmBroadcastMod(loader.Module):
-    """Трансляция текущего трека из Last.fm в название канала и сообщение"""
+    """Красивая трансляция треков Last.fm без мусора в истории"""
     
     strings = {"name": "LastFmBroadcast"}
 
@@ -18,35 +19,32 @@ class LastFmBroadcastMod(loader.Module):
             "lastfm_username", "", "Имя пользователя Last.fm",
             "api_key", "", "API ключ Last.fm",
             "channel_id", 0, "ID канала (например, -1001234567890)",
-            "message_id", 0, "ID сообщения для редактирования"
+            "message_id", 0, "ID сообщения для редактирования",
+            "default_title", "Мой канал", "Название канала, когда музыка не играет",
+            "default_about", "⎯", "Описание канала, когда музыка не играет"
         )
         self._task = None
-        self._last_state = None  # Хранит текущий статус для избежания FloodWait
+        self._last_state = None
 
     async def client_ready(self, client, db):
         self._client = client
-        # Запускаем фоновую задачу при старте модуля
         self._task = asyncio.create_task(self._broadcast_loop())
 
     async def on_unload(self):
-        # Останавливаем задачу при выгрузке модуля
         if self._task:
             self._task.cancel()
 
     async def _broadcast_loop(self):
-        """Фоновый цикл проверки трека каждые 15 секунд"""
         while True:
             await self._update_track()
             await asyncio.sleep(15)
 
     async def _update_track(self):
-        """Получение данных с Last.fm и обновление Telegram"""
         username = self.config["lastfm_username"]
         api_key = self.config["api_key"]
         channel_id = self.config["channel_id"]
         message_id = self.config["message_id"]
 
-        # Если конфиг не настроен, пропускаем итерацию
         if not username or not api_key or not channel_id or not message_id:
             return
 
@@ -59,7 +57,6 @@ class LastFmBroadcastMod(loader.Module):
         track_name = ""
         artist_name = ""
 
-        # Безопасный запрос к API Last.fm
         try:
             async with aiohttp.ClientSession() as session:
                 async with session.get(url, timeout=10) as resp:
@@ -67,7 +64,6 @@ class LastFmBroadcastMod(loader.Module):
                         data = await resp.json()
                         tracks = data.get("recenttracks", {}).get("track", [])
                         
-                        # Last.fm может вернуть как список, так и словарь
                         if isinstance(tracks, list) and len(tracks) > 0:
                             track = tracks[0]
                         elif isinstance(tracks, dict):
@@ -80,45 +76,64 @@ class LastFmBroadcastMod(loader.Module):
                             track_name = track.get("name", "Неизвестный трек")
                             artist_name = track.get("artist", {}).get("#text", "Неизвестный исполнитель")
         except Exception as e:
-            logger.error(f"[LastFm] Ошибка при запросе к API: {e}")
-            return # Прерываем обновление при ошибке сети, попробуем через 15 сек
+            logger.error(f"[LastFm] Ошибка API: {e}")
+            return
 
-        # Формируем новые данные
+        # Формируем данные на основе твоего нового дизайна
         if is_playing:
-            new_title = f"🎧 {track_name} — {artist_name}"
+            new_title = track_name
+            new_about = artist_name
             new_text = f"🎶 Сейчас играет: {track_name} — {artist_name}"
-            current_state = f"{track_name}_{artist_name}" # Уникальный стейт трека
+            current_state = f"{track_name}_{artist_name}"
         else:
-            new_title = "Сейчас ничего не играет"
+            new_title = self.config["default_title"]
+            new_about = self.config["default_about"]
             new_text = "⎯"
             current_state = "stopped"
 
-        # Проверка на изменение данных (Защита от FloodWait)
         if self._last_state == current_state:
             return
             
         self._last_state = current_state
 
-        # Обновление канала и сообщения
         try:
             channel_id_int = int(channel_id)
             message_id_int = int(message_id)
             
-            # Смена названия канала
+            # 1. Меняем название канала (теперь только трек)
             await self._client(EditTitleRequest(
                 channel=channel_id_int,
                 title=new_title
             ))
+
+            # 2. Меняем описание (теперь исполнитель)
+            await self._client(EditDescriptionRequest(
+                channel=channel_id_int,
+                description=new_about
+            ))
             
-            # Редактирование сообщения
+            # 3. Редактируем закрепленный/выбранный пост
             await self._client.edit_message(
                 entity=channel_id_int,
                 message=message_id_int,
                 text=new_text
             )
+
+            # 4. Чистим за собой сервисные логи смены названия
+            await self._clear_service_messages(channel_id_int)
+
         except Exception as e:
-            logger.error(f"[LastFm] Ошибка при обновлении Telegram: {e}")
-            self._last_state = None # Сбрасываем стейт, чтобы попробовать снова
+            logger.error(f"[LastFm] Ошибка обновления Telegram: {e}")
+            self._last_state = None
+
+    async def _clear_service_messages(self, channel_id):
+        """Поиск и удаление системных сообщений о смене названия канала"""
+        try:
+            async for msg in self._client.iter_messages(channel_id, limit=5):
+                if isinstance(msg, MessageService) and isinstance(msg.action, MessageActionChatEditTitle):
+                    await self._client.delete_messages(channel_id, msg.id)
+        except Exception as e:
+            logger.error(f"[LastFm] Не удалось удалить сервисный лог: {e}")
 
     @loader.command()
     async def setfmcmd(self, message):
@@ -127,15 +142,9 @@ class LastFmBroadcastMod(loader.Module):
         if len(args) != 2:
             await utils.answer(message, "<b>[LastFm]</b> Использование: <code>.setfm &lt;username&gt; &lt;api_key&gt;</code>")
             return
-            
         self.config["lastfm_username"] = args[0]
         self.config["api_key"] = args[1]
-        
-        await utils.answer(
-            message, 
-            f"<b>[LastFm]</b> Данные успешно сохранены!\n"
-            f"👤 Username: <code>{args[0]}</code>"
-        )
+        await utils.answer(message, f"<b>[LastFm]</b> Данные сохранены!👤: <code>{args[0]}</code>")
 
     @loader.command()
     async def setmusicidcmd(self, message):
@@ -144,14 +153,9 @@ class LastFmBroadcastMod(loader.Module):
         if len(args) != 2:
             await utils.answer(message, "<b>[LastFm]</b> Использование: <code>.setmusicid &lt;channel_id&gt; &lt;message_id&gt;</code>")
             return
-            
         try:
             self.config["channel_id"] = int(args[0])
             self.config["message_id"] = int(args[1])
-            await utils.answer(
-                message, 
-                "<b>[LastFm]</b> ID канала и сообщения успешно сохранены!\n"
-                "<i>Трансляция начнется в течение 15 секунд (если настроен конфиг Last.fm).</i>"
-            )
+            await utils.answer(message, "<b>[LastFm]</b> ID успешно привязаны!")
         except ValueError:
             await utils.answer(message, "<b>[LastFm]</b> Ошибка: ID должны быть числами!")
