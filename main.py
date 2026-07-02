@@ -29,12 +29,12 @@ class MusicBroadcastMod(loader.Module):
         message_id = int(self.config["message_id"])
         
         if not channel_id or not message_id:
-            await utils.answer(message, "<b>[Music]</b> Ошибка: настройте channel_id и message_id в .config")
+            await utils.answer(message, "<b>[Music]</b> Ошибка: настройте channel_id and message_id в .config")
             return
 
         args_clean = args.strip() if args else ""
 
-        # Проверка на пустые заглушки
+        # Проверка на пустые заглушки или стоп-команды
         if (args_clean.lower() in ["stop", "none", "остановить", "выкл"] or 
             "itunes media" in args_clean.lower() or 
             not args_clean):
@@ -59,8 +59,9 @@ class MusicBroadcastMod(loader.Module):
                 track_name = args_clean
                 artist_name = "Apple Music"
 
-            new_title = 🎧track_name
-            new_text = f"{artist_name}"
+            new_title = track_name
+            # В текст сообщения теперь идет строго имя исполнителя, без эмодзи и без названия трека
+            new_text = artist_name
             current_state = f"{track_name}_{artist_name}"
 
         # Защита от дубликатов заголовков
@@ -72,26 +73,26 @@ class MusicBroadcastMod(loader.Module):
         try:
             from hikkatl.tl import functions
 
-            # 1. Меняем название канала
+            # 1. Меняем название канала (остается названием песни)
             await self._client(functions.channels.EditTitleRequest(
                 channel=channel_id, 
                 title=new_title
             ))
             
-            # 2. Редактируем пост внутри канала
+            # 2. Редактируем пост внутри канала (теперь там только Артист)
             await self._client.edit_message(
                 entity=channel_id, 
                 message=message_id, 
                 text=new_text
             )
             
-            # Удаляем команду .settrackfm из чата-посредника (например, от Киры)
+            # Удаляем команду .settrackfm из чата-посредника
             await message.delete()
 
             # Даем серверу Telegram полсекунды сгенерировать плашку переименования
             await asyncio.sleep(0.5)
 
-            # 3. Находим и удаляем сервисный лог ("Название изменено на...") по примеру Яндекс Музыки
+            # 3. Находим и удаляем сервисный лог ("Название изменено на...")
             messages = await self._client.get_messages(channel_id, limit=1)
             if messages and messages[0].action:
                 await messages[0].delete()
