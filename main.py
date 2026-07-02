@@ -32,12 +32,17 @@ class MusicBroadcastMod(loader.Module):
         self._client = client
         import aiohttp
         self._session = aiohttp.ClientSession()
+        
+        # Используем родной метод Хизки для фоновых задач, чтобы цикл не умирал
         if self.config["auto_poll"]:
-            self._task = asyncio.ensure_future(self._poll_loop())
+            self._task = self.run_background_task(self._poll_loop())
 
     async def on_unload(self):
         if self._task:
-            self._task.cancel()
+            try:
+                self._task.cancel()
+            except Exception:
+                pass
         if self._session:
             await self._session.close()
 
@@ -47,9 +52,11 @@ class MusicBroadcastMod(loader.Module):
             try:
                 await self._check_lastfm()
             except asyncio.CancelledError:
-                raise
+                break
             except Exception as e:
                 logger.error(f"[Music] Last.fm poll error: {e}")
+            
+            # Динамически берем интервал из конфига
             await asyncio.sleep(max(10, int(self.config["poll_interval"])))
 
     async def _check_lastfm(self):
