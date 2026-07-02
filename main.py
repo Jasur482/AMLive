@@ -1,6 +1,3 @@
-Конечно, без проблем. Длинное тире — заменено на обычное дефис-тире -. Теперь всё будет выглядеть максимально ровно и аккуратно.
-Держи обновленный код:
-```python
 import logging
 import asyncio
 from .. import loader, utils
@@ -28,7 +25,6 @@ class MusicBroadcastMod(loader.Module):
         self._task = None
         self._session = None
         self._manual_override = False
-        # Красивая дефолтная обложка Apple Music, если у трека на Last.fm нет картинки
         self._default_cover = "https://raw.githubusercontent.com/idwtext/resources/main/am_placeholder.png"
 
     async def client_ready(self, client, db):
@@ -99,7 +95,6 @@ class MusicBroadcastMod(loader.Module):
         track_name = (track.get("name") or "").strip()
         artist_name = (track.get("artist", {}).get("#text") or "").strip()
         
-        # Улучшенный поиск обложки альбома
         cover_url = ""
         images = track.get("image", [])
         if isinstance(images, list):
@@ -144,7 +139,6 @@ class MusicBroadcastMod(loader.Module):
             return
         self._last_state = current_state
         final_cover = cover_url if cover_url else self._default_cover
-        # Здесь длинное тире заменено на обычное (-)
         await self._update_channel("Now Playing", f"🟥 {track_name} - {artist_name}", final_cover)
 
     async def _update_channel(self, title, text, cover_url=None):
@@ -163,26 +157,22 @@ class MusicBroadcastMod(loader.Module):
                 title=title
             ))
 
-            # 2. Обновляем пост с обложкой альбома
+            # 2. Безопасное удаление старого сообщения (защита от Message_id_invalid)
+            if message_id:
+                try:
+                    await self._client.delete_messages(channel_id, message_id)
+                except Exception:
+                    pass
+
+            # 3. Отправка нового статуса
             if cover_url:
-                if message_id:
-                    try:
-                        await self._client.delete_messages(channel_id, message_id)
-                    except Exception:
-                        pass
-                
                 new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
                 self.config["message_id"] = new_msg.id
             else:
-                if message_id:
-                    try:
-                        await self._client.delete_messages(channel_id, message_id)
-                    except Exception:
-                        pass
                 new_msg = await self._client.send_message(channel_id, text)
                 self.config["message_id"] = new_msg.id
 
-            # Очистка сервисных сообщений
+            # Очистка сервисных уведомлений
             await asyncio.sleep(0.8)
             messages = await self._client.get_messages(channel_id, limit=3)
             for msg in messages:
@@ -194,8 +184,6 @@ class MusicBroadcastMod(loader.Module):
 
         except Exception as e:
             logger.error(f"[Music] Channel update error: {e}")
-
-    # ---------- команды ----------
 
     @loader.command()
     async def settrackfmcmd(self, message):
@@ -225,5 +213,3 @@ class MusicBroadcastMod(loader.Module):
         self._manual_override = True
         await self._apply_track(track_name, artist_name, cover_url=None)
         await message.delete()
-
-```
