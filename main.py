@@ -59,8 +59,8 @@ class MusicBroadcastMod(loader.Module):
                 track_name = args_clean
                 artist_name = "Apple Music"
 
-            new_title = track_name
-            new_text = f"🎶 Сейчас играет: {track_name} — {artist_name}"
+            new_title = 🎧track_name
+            new_text = f"{artist_name}"
             current_state = f"{track_name}_{artist_name}"
 
         # Защита от дубликатов заголовков
