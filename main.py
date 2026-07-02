@@ -122,7 +122,7 @@ class MusicBroadcastMod(loader.Module):
         if self._last_state == current_state:
             return
         self._last_state = current_state
-        await self._update_channel(self.config["default_title"], "⎯")
+        await self._update_channel(self.config["default_title"], "-")
 
     async def _apply_track(self, track_name, artist_name):
         current_state = f"{track_name}_{artist_name}"
