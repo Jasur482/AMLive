@@ -13,7 +13,7 @@ class MusicBroadcastMod(loader.Module):
         self.config = loader.ModuleConfig(
             "channel_id", 0, "ID канала",
             "message_id", 0, "ID сообщения для редактирования",
-            "trigger_chat_id", 0, "ID чата, куда iPhone шлет команды",
+            "trigger_chat_id", 0, "ID чата (Kira), куда iPhone шлет команды",
             "default_title", "Мой канал", "Название, когда ничего не играет",
             "default_about", "⎯", "Описание, когда ничего не играет",
             "enabled", True, "Включен ли модуль (True/False)"
@@ -43,7 +43,7 @@ class MusicBroadcastMod(loader.Module):
         if not channel_id or not message_id:
             return
 
-        # Проверка на остановку или пустой шаблон от iOS
+        # Фильтр заглушек от iOS
         if args.lower() == "stop" or "itunes media" in args.lower() or not args.strip():
             new_title = self.config["default_title"]
             new_about = self.config["default_about"]
@@ -66,15 +66,20 @@ class MusicBroadcastMod(loader.Module):
         self._last_state = current_state
 
         try:
-            # Импортируем функцию прямо внутри, чтобы у ядра Hikka не было вопросов при установке
-            from telethon.tl.functions.channels import EditTitleRequest, EditDescriptionRequest
+            # Правильные импорты для актуальной Hikka (HikkaTL)
+            from hikkatl.tl.functions.channels import EditTitleRequest
+            from hikkatl.tl.functions.messages import EditChatDescriptionRequest
             
-            # Обновляем канал
+            # 1. Обновляем название канала
             await self._client(EditTitleRequest(channel=channel_id, title=new_title))
-            await self._client(EditDescriptionRequest(channel=channel_id, description=new_about))
+            
+            # 2. Обновляем описание канала (используем правильный запрос для Hikka)
+            await self._client(EditChatDescriptionRequest(peer=channel_id, description=new_about))
+            
+            # 3. Редактируем пост
             await self._client.edit_message(entity=channel_id, message=message_id, text=new_text)
             
-            # Чистим за собой логи переименования
+            # 4. Чистим за собой логи переименования
             async for msg in self._client.iter_messages(channel_id, limit=5):
                 if msg.is_service:
                     await self._client.delete_messages(channel_id, msg.id)
