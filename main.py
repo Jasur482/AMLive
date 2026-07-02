@@ -140,7 +140,6 @@ class MusicBroadcastMod(loader.Module):
             return
         self._last_state = current_state
         final_cover = cover_url if cover_url else self._default_cover
-        # Убрал красный квадрат отсюда
         await self._update_channel(text=f"{track_name} - {artist_name}", cover_url=final_cover)
 
     async def _update_channel(self, text, cover_url=None):
@@ -192,7 +191,7 @@ class MusicBroadcastMod(loader.Module):
         args = utils.get_args_raw(message)
         args_clean = args.strip() if args else ""
 
-        if (args_clean.lower() in ["stop", "none", "stop", "off"] or
+        if (args_clean.lower() in ["stop", "none", "off"] or
                 "itunes media" in args_clean.lower() or not args_clean):
             self._manual_override = False
             await self._apply_stopped()
