@@ -33,7 +33,6 @@ class MusicBroadcastMod(loader.Module):
         import aiohttp
         self._session = aiohttp.ClientSession()
         
-        # Используем родной метод Хизки для фоновых задач, чтобы цикл не умирал
         if self.config["auto_poll"]:
             self._task = self.run_background_task(self._poll_loop())
 
@@ -54,9 +53,8 @@ class MusicBroadcastMod(loader.Module):
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"[Music] Last.fm poll error: {e}")
+                logger.error(f"[Music] Loop error: {e}")
             
-            # Динамически берем интервал из конфига
             await asyncio.sleep(max(10, int(self.config["poll_interval"])))
 
     async def _check_lastfm(self):
@@ -113,12 +111,6 @@ class MusicBroadcastMod(loader.Module):
                         break
                 if cover_url:
                     break
-            
-            if not cover_url:
-                for img in reversed(images):
-                    if img.get("#text"):
-                        cover_url = img.get("#text").strip()
-                        break
 
         if not track_name:
             if not self._manual_override:
@@ -132,7 +124,8 @@ class MusicBroadcastMod(loader.Module):
                 self._manual_override = False
                 await self._apply_track(track_name, artist_name, cover_url)
         else:
-            await self._apply_track(track_name, artist_name, cover_url)
+            if self._last_state != incoming_state:
+                await self._apply_track(track_name, artist_name, cover_url)
 
     async def _apply_stopped(self):
         current_state = "stopped"
@@ -142,10 +135,7 @@ class MusicBroadcastMod(loader.Module):
         await self._update_channel(text=self.config["stopped_text"], cover_url=None)
 
     async def _apply_track(self, track_name, artist_name, cover_url=None):
-        current_state = f"{track_name}_{artist_name}"
-        if self._last_state == current_state:
-            return
-        self._last_state = current_state
+        self._last_state = f"{track_name}_{artist_name}"
         final_cover = cover_url if cover_url else self._default_cover
         await self._update_channel(text=f"{track_name} - {artist_name}", cover_url=final_cover)
 
@@ -156,16 +146,9 @@ class MusicBroadcastMod(loader.Module):
         if not channel_id:
             return
 
+        # Полная изоляция от любых ошибок Telegram внутри метода
         try:
             from hikkatl.tl import functions
-
-            try:
-                await self._client(functions.channels.EditTitleRequest(
-                    channel=channel_id,
-                    title=self.config["fixed_title"]
-                ))
-            except Exception:
-                pass
 
             if message_id:
                 try:
@@ -174,23 +157,27 @@ class MusicBroadcastMod(loader.Module):
                     pass
 
             if cover_url:
-                new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
-                self.config["message_id"] = new_msg.id
+                try:
+                    new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
+                    self.config["message_id"] = new_msg.id
+                except Exception:
+                    new_msg = await self._client.send_message(channel_id, text)
+                    self.config["message_id"] = new_msg.id
             else:
                 new_msg = await self._client.send_message(channel_id, text)
                 self.config["message_id"] = new_msg.id
 
             await asyncio.sleep(0.5)
-            messages = await self._client.get_messages(channel_id, limit=3)
-            for msg in messages:
-                if msg.action:
-                    try:
+            try:
+                messages = await self._client.get_messages(channel_id, limit=3)
+                for msg in messages:
+                    if msg.action:
                         await msg.delete()
-                    except Exception:
-                        pass
+            except Exception:
+                pass
 
         except Exception as e:
-            logger.error(f"[Music] Channel update error: {e}")
+            logger.error(f"[Music] Channel action error: {e}")
 
     @loader.command()
     async def settrackfmcmd(self, message):
@@ -198,15 +185,13 @@ class MusicBroadcastMod(loader.Module):
         args = utils.get_args_raw(message)
         args_clean = args.strip() if args else ""
 
-        if (args_clean.lower() in ["stop", "none", "off"] or
-                "itunes media" in args_clean.lower() or not args_clean):
+        if (args_clean.lower() in ["stop", "none", "off"] or not args_clean):
             self._manual_override = False
             await self._apply_stopped()
             await message.delete()
             return
 
         separator = "-" if "-" in args_clean else None
-
         if separator:
             try:
                 track_name, artist_name = [x.strip() for x in args_clean.split(separator, 1)]
