@@ -14,8 +14,9 @@ class MusicBroadcastMod(loader.Module):
     def __init__(self):
         self.config = loader.ModuleConfig(
             "channel_id", 0, "ID канала",
-            "message_id", 0, "ID сообщения для редактирования/удаления",
-            "default_title", "Not Playing", "Название канала, когда ничего не играет",
+            "message_id", 0, "ID сообщения для удаления",
+            "fixed_title", "Now Playing", "Постоянное название канала",
+            "stopped_text", "Nothing is playing", "Текст, когда музыка не играет",
             "lastfm_user", "", "Юзернейм на Last.fm",
             "lastfm_api_key", "", "API key с last.fm/api/account/create",
             "poll_interval", 10, "Интервал опроса Last.fm, сек (не меньше 10)",
@@ -131,7 +132,7 @@ class MusicBroadcastMod(loader.Module):
         if self._last_state == current_state:
             return
         self._last_state = current_state
-        await self._update_channel(self.config["default_title"], "⎯", cover_url=None)
+        await self._update_channel(text=self.config["stopped_text"], cover_url=None)
 
     async def _apply_track(self, track_name, artist_name, cover_url=None):
         current_state = f"{track_name}_{artist_name}"
@@ -139,9 +140,9 @@ class MusicBroadcastMod(loader.Module):
             return
         self._last_state = current_state
         final_cover = cover_url if cover_url else self._default_cover
-        await self._update_channel("Now Playing", f"🟥 {track_name} - {artist_name}", final_cover)
+        await self._update_channel(text=f"🟥 {track_name} - {artist_name}", cover_url=final_cover)
 
-    async def _update_channel(self, title, text, cover_url=None):
+    async def _update_channel(self, text, cover_url=None):
         channel_id = int(self.config["channel_id"])
         message_id = int(self.config["message_id"])
 
@@ -151,20 +152,24 @@ class MusicBroadcastMod(loader.Module):
         try:
             from hikkatl.tl import functions
 
-            # 1. Меняем название канала
-            await self._client(functions.channels.EditTitleRequest(
-                channel=channel_id,
-                title=title
-            ))
+            # 1. Меняем название ОДИН раз при запуске/смене (или проверяем текущее, чтобы не спамить запросами)
+            # Для надежности ставим fixed_title, но ТГ не будет ругаться, если оно уже такое
+            try:
+                await self._client(functions.channels.EditTitleRequest(
+                    channel=channel_id,
+                    title=self.config["fixed_title"]
+                ))
+            except Exception:
+                pass
 
-            # 2. Безопасное удаление старого сообщения (защита от Message_id_invalid)
+            # 2. Удаляем предыдущий пост
             if message_id:
                 try:
                     await self._client.delete_messages(channel_id, message_id)
                 except Exception:
                     pass
 
-            # 3. Отправка нового статуса
+            # 3. Отправляем новый чистый пост
             if cover_url:
                 new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
                 self.config["message_id"] = new_msg.id
@@ -172,8 +177,8 @@ class MusicBroadcastMod(loader.Module):
                 new_msg = await self._client.send_message(channel_id, text)
                 self.config["message_id"] = new_msg.id
 
-            # Очистка сервисных уведомлений
-            await asyncio.sleep(0.8)
+            # 4. Вычищаем сервисные сообщения ТГ о переименовании, чтобы не засорять ленту
+            await asyncio.sleep(0.5)
             messages = await self._client.get_messages(channel_id, limit=3)
             for msg in messages:
                 if msg.action:
