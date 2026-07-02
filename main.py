@@ -1,3 +1,6 @@
+Конечно, без проблем. Длинное тире — заменено на обычное дефис-тире -. Теперь всё будет выглядеть максимально ровно и аккуратно.
+Держи обновленный код:
+```python
 import logging
 import asyncio
 from .. import loader, utils
@@ -96,11 +99,10 @@ class MusicBroadcastMod(loader.Module):
         track_name = (track.get("name") or "").strip()
         artist_name = (track.get("artist", {}).get("#text") or "").strip()
         
-        # Улучшенный и более агрессивный поиск обложки альбома
+        # Улучшенный поиск обложки альбома
         cover_url = ""
         images = track.get("image", [])
         if isinstance(images, list):
-            # Ищем сначала самую большую ('extralarge' или 'large')
             for size in ["extralarge", "large", "medium", "small"]:
                 for img in images:
                     if img.get("size") == size and img.get("#text"):
@@ -109,7 +111,6 @@ class MusicBroadcastMod(loader.Module):
                 if cover_url:
                     break
             
-            # Фолбэк: если size не совпал, но хоть какая-то ссылка внутри есть
             if not cover_url:
                 for img in reversed(images):
                     if img.get("#text"):
@@ -142,9 +143,9 @@ class MusicBroadcastMod(loader.Module):
         if self._last_state == current_state:
             return
         self._last_state = current_state
-        # Если обложки нет вообще — подставляем дефолтный красный значок Apple Music
         final_cover = cover_url if cover_url else self._default_cover
-        await self._update_channel("Now Playing", f"🟥 {track_name} — {artist_name}", final_cover)
+        # Здесь длинное тире заменено на обычное (-)
+        await self._update_channel("Now Playing", f"🟥 {track_name} - {artist_name}", final_cover)
 
     async def _update_channel(self, title, text, cover_url=None):
         channel_id = int(self.config["channel_id"])
@@ -164,18 +165,15 @@ class MusicBroadcastMod(loader.Module):
 
             # 2. Обновляем пост с обложкой альбома
             if cover_url:
-                # Удаляем старый пост (если он был задан), чтобы отправить медиафайл заново
                 if message_id:
                     try:
                         await self._client.delete_messages(channel_id, message_id)
                     except Exception:
                         pass
                 
-                # Отправляем обложку как фото, а текст пишем в описание (Caption)
                 new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
                 self.config["message_id"] = new_msg.id
             else:
-                # Ветка для статуса "Stopped" (просто текст ⎯ без картинок)
                 if message_id:
                     try:
                         await self._client.delete_messages(channel_id, message_id)
@@ -184,7 +182,7 @@ class MusicBroadcastMod(loader.Module):
                 new_msg = await self._client.send_message(channel_id, text)
                 self.config["message_id"] = new_msg.id
 
-            # Очистка сервисных сообщений переименования из ленты канала
+            # Очистка сервисных сообщений
             await asyncio.sleep(0.8)
             messages = await self._client.get_messages(channel_id, limit=3)
             for msg in messages:
@@ -201,7 +199,7 @@ class MusicBroadcastMod(loader.Module):
 
     @loader.command()
     async def settrackfmcmd(self, message):
-        """<text> — ручной ввод трека формата Имя — Артист"""
+        """<text> — ручной ввод трека формата Имя - Артист"""
         args = utils.get_args_raw(message)
         args_clean = args.strip() if args else ""
 
@@ -227,3 +225,5 @@ class MusicBroadcastMod(loader.Module):
         self._manual_override = True
         await self._apply_track(track_name, artist_name, cover_url=None)
         await message.delete()
+
+```
