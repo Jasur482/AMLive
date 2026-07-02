@@ -23,7 +23,7 @@ class MusicBroadcastMod(loader.Module):
 
     @loader.command()
     async def settrackfmcmd(self, message):
-        """<текст> — обновить название канала и пост"""
+        """<текст> — обновить название канала и пост с очисткой сервисных логов"""
         args = utils.get_args_raw(message)
         channel_id = int(self.config["channel_id"])
         message_id = int(self.config["message_id"])
@@ -34,7 +34,7 @@ class MusicBroadcastMod(loader.Module):
 
         args_clean = args.strip() if args else ""
 
-        # Фильтр пустых заглушек
+        # Проверка на пустые заглушки
         if (args_clean.lower() in ["stop", "none", "остановить", "выкл"] or 
             "itunes media" in args_clean.lower() or 
             not args_clean):
@@ -63,7 +63,7 @@ class MusicBroadcastMod(loader.Module):
             new_text = f"🎶 Сейчас играет: {track_name} — {artist_name}"
             current_state = f"{track_name}_{artist_name}"
 
-        # Защита от дубликатов
+        # Защита от дубликатов заголовков
         if self._last_state == current_state:
             await message.delete()
             return
@@ -72,32 +72,29 @@ class MusicBroadcastMod(loader.Module):
         try:
             from hikkatl.tl import functions
 
-            # 1. Меняем только название канала
+            # 1. Меняем название канала
             await self._client(functions.channels.EditTitleRequest(
                 channel=channel_id, 
                 title=new_title
             ))
             
-            # 2. Редактируем пост
+            # 2. Редактируем пост внутри канала
             await self._client.edit_message(
                 entity=channel_id, 
                 message=message_id, 
                 text=new_text
             )
             
-            # Удаляем команду .settrackfm, которой ты вызывал бота
+            # Удаляем команду .settrackfm из чата-посредника (например, от Киры)
             await message.delete()
 
-            # Даем Telegram полсекунды обновить историю чата
+            # Даем серверу Telegram полсекунды сгенерировать плашку переименования
             await asyncio.sleep(0.5)
 
-            # 3. Полностью вычищаем сервисные сообщения о смене названия
-            async for msg in self._client.iter_messages(channel_id, limit=8):
-                if msg.is_service:
-                    try:
-                        await self._client.delete_messages(channel_id, msg.id)
-                    except Exception:
-                        pass
+            # 3. Находим и удаляем сервисный лог ("Название изменено на...") по примеру Яндекс Музыки
+            messages = await self._client.get_messages(channel_id, limit=1)
+            if messages and messages[0].action:
+                await messages[0].delete()
 
         except Exception as e:
             logger.error(f"[Music] Ошибка обновления: {e}")
