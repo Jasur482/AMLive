@@ -18,13 +18,15 @@ class MusicBroadcastMod(loader.Module):
             "default_title", "Not Playing", "Название канала, когда ничего не играет",
             "lastfm_user", "", "Юзернейм на Last.fm",
             "lastfm_api_key", "", "API key с last.fm/api/account/create",
-            "poll_interval", 15, "Интервал опроса Last.fm, сек (не меньше 10)",
+            "poll_interval", 10, "Интервал опроса Last.fm, сек (не меньше 10)",
             "auto_poll", True, "Включить автоопрос Last.fm при старте",
         )
         self._last_state = None
         self._task = None
         self._session = None
         self._manual_override = False
+        # Красивая дефолтная обложка Apple Music, если у трека на Last.fm нет картинки
+        self._default_cover = "https://raw.githubusercontent.com/idwtext/resources/main/am_placeholder.png"
 
     async def client_ready(self, client, db):
         self._client = client
@@ -94,14 +96,25 @@ class MusicBroadcastMod(loader.Module):
         track_name = (track.get("name") or "").strip()
         artist_name = (track.get("artist", {}).get("#text") or "").strip()
         
-        # Получаем обложку (ищем самый большой размер 'extralarge')
-        images = track.get("image", [])
+        # Улучшенный и более агрессивный поиск обложки альбома
         cover_url = ""
-        if images:
-            for img in reversed(images):
-                if img.get("#text"):
-                    cover_url = img.get("#text")
+        images = track.get("image", [])
+        if isinstance(images, list):
+            # Ищем сначала самую большую ('extralarge' или 'large')
+            for size in ["extralarge", "large", "medium", "small"]:
+                for img in images:
+                    if img.get("size") == size and img.get("#text"):
+                        cover_url = img.get("#text").strip()
+                        break
+                if cover_url:
                     break
+            
+            # Фолбэк: если size не совпал, но хоть какая-то ссылка внутри есть
+            if not cover_url:
+                for img in reversed(images):
+                    if img.get("#text"):
+                        cover_url = img.get("#text").strip()
+                        break
 
         if not track_name:
             if not self._manual_override:
@@ -129,54 +142,57 @@ class MusicBroadcastMod(loader.Module):
         if self._last_state == current_state:
             return
         self._last_state = current_state
-        await self._update_channel("Now Playing", f"🟥 {track_name} — {artist_name}", cover_url)
+        # Если обложки нет вообще — подставляем дефолтный красный значок Apple Music
+        final_cover = cover_url if cover_url else self._default_cover
+        await self._update_channel("Now Playing", f"🟥 {track_name} — {artist_name}", final_cover)
 
     async def _update_channel(self, title, text, cover_url=None):
         channel_id = int(self.config["channel_id"])
         message_id = int(self.config["message_id"])
 
-        if not channel_id or not message_id:
+        if not channel_id:
             return
 
         try:
             from hikkatl.tl import functions
 
-            # 1. Меняем название канала на "Now Playing" или "Not Playing"
+            # 1. Меняем название канала
             await self._client(functions.channels.EditTitleRequest(
                 channel=channel_id,
                 title=title
             ))
 
-            # 2. Обновляем пост с обложкой
-            if cover_url and cover_url.strip():
-                # Удаляем старый пост, чтобы загрузить медиа заново
-                try:
-                    await self._client.delete_messages(channel_id, message_id)
-                except Exception:
-                    pass
-                
-                # Отправляем новую обложку с подписью трека
-                new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
-                self.config["message_id"] = new_msg.id  # Запоминаем новый ID сообщения
-            else:
-                # Если обложки нет или это статус "stopped" — просто редактируем текст (или ставим прочерк)
-                try:
-                    await self._client.edit_message(entity=channel_id, message=message_id, text=text)
-                except Exception:
-                    # Если сообщение с картинкой не поддается обычному редактированию текста, перевыпускаем его текстовым
+            # 2. Обновляем пост с обложкой альбома
+            if cover_url:
+                # Удаляем старый пост (если он был задан), чтобы отправить медиафайл заново
+                if message_id:
                     try:
                         await self._client.delete_messages(channel_id, message_id)
                     except Exception:
                         pass
-                    new_msg = await self._client.send_message(channel_id, text)
-                    self.config["message_id"] = new_msg.id
+                
+                # Отправляем обложку как фото, а текст пишем в описание (Caption)
+                new_msg = await self._client.send_file(channel_id, cover_url, caption=text)
+                self.config["message_id"] = new_msg.id
+            else:
+                # Ветка для статуса "Stopped" (просто текст ⎯ без картинок)
+                if message_id:
+                    try:
+                        await self._client.delete_messages(channel_id, message_id)
+                    except Exception:
+                        pass
+                new_msg = await self._client.send_message(channel_id, text)
+                self.config["message_id"] = new_msg.id
 
-            # Очистка сервисного мусора переименования
-            await asyncio.sleep(0.6)
-            messages = await self._client.get_messages(channel_id, limit=2)
+            # Очистка сервисных сообщений переименования из ленты канала
+            await asyncio.sleep(0.8)
+            messages = await self._client.get_messages(channel_id, limit=3)
             for msg in messages:
                 if msg.action:
-                    await msg.delete()
+                    try:
+                        await msg.delete()
+                    except Exception:
+                        pass
 
         except Exception as e:
             logger.error(f"[Music] Channel update error: {e}")
