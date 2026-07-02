@@ -10,7 +10,7 @@ logger = logging.getLogger(__name__)
 
 @loader.tds
 class MusicBroadcastMod(loader.Module):
-    """Прямая трансляция треков из Apple Shortcuts через чат-посредник"""
+    """Прямая трансляция треков из Apple Shortcuts через чат-посредник с фильтрацией мусора"""
     
     strings = {"name": "MusicBroadcast"}
 
@@ -20,15 +20,20 @@ class MusicBroadcastMod(loader.Module):
             "message_id", 0, "ID сообщения для редактирования",
             "trigger_chat_id", 0, "ID чата (Kira), куда iPhone шлет команды",
             "default_title", "Мой канал", "Название, когда ничего не играет",
-            "default_about", "⎯", "Описание, когда ничего не играет"
+            "default_about", "⎯", "Описание, когда ничего не играет",
+            "enabled", True, "Включен ли модуль (True/False)"
         )
         self._last_state = None
 
     async def client_ready(self, client, db):
         self._client = client
 
-    @loader.watcher()  # Убрали incoming=True, чтобы ловить исходящие от тебя сообщения
+    @loader.watcher()
     async def watcher(self, message):
+        # Если модуль выключен в конфиге, игнорируем триггеры
+        if not self.config["enabled"]:
+            return
+
         trigger_chat = self.config["trigger_chat_id"]
         if not trigger_chat or message.chat_id != int(trigger_chat):
             return
@@ -37,7 +42,7 @@ class MusicBroadcastMod(loader.Module):
         if not text.startswith(".settrack "):
             return
 
-        # Извлекаем аргументы после .settrack
+        # Извлекаем то, что прислал iPhone
         args = text.split(".settrack ", 1)[1].strip()
         channel_id = int(self.config["channel_id"])
         message_id = int(self.config["message_id"])
@@ -45,8 +50,8 @@ class MusicBroadcastMod(loader.Module):
         if not channel_id or not message_id:
             return
 
-        # Логика обработки трека
-        if args.lower() == "stop":
+        # Условие выключения: если пришло 'stop' ИЛИ пустой шаблон 'iTunes Media —'
+        if args.lower() == "stop" or args == "iTunes Media —" or args.strip() == "iTunes Media":
             new_title = self.config["default_title"]
             new_about = self.config["default_about"]
             new_text = "⎯"
@@ -54,14 +59,22 @@ class MusicBroadcastMod(loader.Module):
         else:
             try:
                 track_name, artist_name = [x.strip() for x in args.split("—", 1)]
+                # Дополнительная проверка на случай, если артист пустой, но 'iTunes Media' пролезло в название
+                if "iTunes Media" in track_name and not artist_name:
+                    raise ValueError
             except ValueError:
-                track_name = args
-                artist_name = "Apple Music"
-            
-            new_title = track_name
-            new_about = artist_name
-            new_text = f"🎶 Сейчас играет: {track_name} — {artist_name}"
-            current_state = f"{track_name}_{artist_name}"
+                # Если формат сломался или это пустой iTunes Media, сбрасываем статус
+                new_title = self.config["default_title"]
+                new_about = self.config["default_about"]
+                new_text = "⎯"
+                current_state = "stopped"
+                return  # Или можно убрать return, если нужно принудительно ставить дефолт
+
+            if current_state != "stopped":
+                new_title = track_name
+                new_about = artist_name
+                new_text = f"🎶 Сейчас играет: {track_name} — {artist_name}"
+                current_state = f"{track_name}_{artist_name}"
 
         if self._last_state == current_state:
             return
@@ -79,6 +92,15 @@ class MusicBroadcastMod(loader.Module):
                     await self._client.delete_messages(channel_id, msg.id)
         except Exception as e:
             logger.error(f"[Music] Ошибка обновления: {e}")
+
+    @loader.command()
+    async def togglefmcmd(self, message):
+        """Переключить работу трансляции музыки (Вкл/Выкл)"""
+        state = not self.config["enabled"]
+        self.config["enabled"] = state
+        
+        status_text = "<b>включена</b> 🟢" if state else "<b>выключена</b> 🔴"
+        await utils.answer(message, f"<b>[Music]</b> Трансляция музыки {status_text}")
 
     @loader.command()
     async def setmusicidcmd(self, message):
